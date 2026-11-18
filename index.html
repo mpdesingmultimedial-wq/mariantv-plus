@@ -106,7 +106,13 @@
     .ch-row:hover { background: var(--card); border-color: rgba(255,255,255,0.2); }
     .ch-row.active { background: rgba(255, 107, 0, 0.18); border-color: var(--orange); }
     .ch-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-    .ch-num { font-weight: 900; font-size: 13px; color: #64748b; width: 34px; flex-shrink: 0; }
+    .ch-logo-box {
+      width: 34px; height: 34px; border-radius: 7px; background: #0e131d;
+      border: 1px solid #263147; display: grid; place-items: center;
+      overflow: hidden; flex-shrink: 0; font-size: 11px; font-weight: 900; color: var(--mint);
+    }
+    .ch-logo-box img { width: 100%; height: 100%; object-fit: contain; padding: 2px; }
+    .ch-num { font-weight: 900; font-size: 12.5px; color: #64748b; width: 32px; flex-shrink: 0; }
     .ch-row.active .ch-num { color: var(--orange); }
     .ch-info { flex: 1; min-width: 0; }
     .ch-name { font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -123,14 +129,14 @@
       position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 26;
       background: rgba(14, 18, 26, 0.92); backdrop-filter: blur(10px);
       border: 1px solid rgba(255, 107, 0, 0.38); border-radius: 14px;
-      padding: 12px 16px; width: 620px; max-width: 94vw;
+      padding: 12px 16px; width: 650px; max-width: 94vw;
       box-shadow: 0 14px 40px rgba(0,0,0,0.8);
-      transition: opacity 0.25s ease, transform 0.25s ease;
+      transition: opacity 0.25s ease, transform 0.25s ease, visibility 0.25s ease;
     }
-    .epg-bar.hidden { opacity: 0; pointer-events: none; transform: translate(-50%, 20px); }
+    .epg-bar.hidden { opacity: 0; visibility: hidden; pointer-events: none; transform: translate(-50%, 20px); }
     .bar-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-    .ch-badge { background: var(--orange); color: #fff; font-weight: 900; font-size: 11px; padding: 2px 7px; border-radius: 5px; }
-    .live-tag { background: var(--red); color: #fff; font-weight: 900; font-size: 9px; padding: 2px 5px; border-radius: 4px; }
+    .ch-badge { background: var(--orange); color: #fff; font-weight: 900; font-size: 11px; padding: 3px 7px; border-radius: 5px; white-space: nowrap; flex-shrink: 0; }
+    .live-tag { background: var(--red); color: #fff; font-weight: 900; font-size: 9px; padding: 3px 5px; border-radius: 4px; white-space: nowrap; flex-shrink: 0; }
     .epg-controls { display: flex; gap: 5px; flex-shrink: 0; }
     .ctrl-btn {
       width: 31px; height: 31px; border-radius: 8px;
@@ -237,6 +243,7 @@
     <div class="epg-bar" id="epgBar">
       <div class="bar-top">
         <div style="min-width:0;flex:1;display:flex;align-items:center;gap:7px;">
+          <div class="ch-logo-box" id="barChLogo">TV</div>
           <span class="ch-badge" id="barChNum">CH 101</span>
           <strong id="barChTitle" style="font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Cargando...</strong>
           <span class="live-tag">EN VIVO</span>
@@ -361,6 +368,50 @@
       `;
     }
 
+    function getInitials(title) {
+      return (title || "TV").split(" ").filter(w => w && /[a-z0-9]/i.test(w[0])).slice(0, 2).map(w => w[0].toUpperCase()).join("") || "TV";
+    }
+
+    function renderLogoInner(ch) {
+      const init = getInitials(ch.title);
+      if (ch.posterUrl && ch.posterUrl.trim()) {
+        return `<img src="${ch.posterUrl}" alt="" loading="lazy" onerror="this.parentElement.textContent='${init}';" />`;
+      }
+      return init;
+    }
+
+    const NOISE_WORDS = new Set(["hd", "fhd", "uhd", "sd", "4k", "tv", "en", "vivo", "live", "plus", "la", "el", "de", "y", "the"]);
+    function normalizeChName(raw) {
+      return (raw || "").toLowerCase().replace(/\([^)]*\)|\[[^\]]*\]/g, " ").replace(/[^a-z0-9áéíóúñü]+/g, " ").trim().replace(/\s+/g, " ");
+    }
+
+    function findSimilarBackupChannel(failed, excludedSet) {
+      const targetNorm = normalizeChName(failed.title);
+      if (!targetNorm) return null;
+      const targetWords = new Set(targetNorm.split(" ").filter(w => w.length >= 2 && !NOISE_WORDS.has(w)));
+      let best = null, bestScore = 0;
+
+      for (const ch of channels) {
+        if (ch.id === failed.id || excludedSet.has(ch.id)) continue;
+        const candNorm = normalizeChName(ch.title);
+        if (!candNorm) continue;
+        let score = 0;
+        if (candNorm === targetNorm) score = 100;
+        else if (candNorm.startsWith(targetNorm) || targetNorm.startsWith(candNorm)) score = 80;
+        else if (targetWords.size > 0) {
+          const candWords = new Set(candNorm.split(" ").filter(w => w.length >= 2 && !NOISE_WORDS.has(w)));
+          let shared = 0;
+          for (const w of targetWords) if (candWords.has(w)) shared++;
+          if (shared > 0) {
+            const ratio = Math.round((shared * 100) / Math.max(targetWords.size, candWords.size));
+            if (ratio >= 50) score = ratio;
+          }
+        }
+        if (score > bestScore) { bestScore = score; best = ch; if (score === 100) break; }
+      }
+      return bestScore >= 50 ? best : null;
+    }
+
     function renderChannels() {
       const list = getFilteredChannels();
       document.getElementById("chCountHeader").textContent = `CANALES (${list.length})`;
@@ -371,6 +422,7 @@
         return `
           <div class="ch-row ${isActive ? 'active' : ''}" onclick="selectChannel('${ch.id}')">
             <div class="ch-top">
+              <div class="ch-logo-box">${renderLogoInner(ch)}</div>
               <span class="ch-num">${String(ch.channelNumber).padStart(3, "0")}</span>
               <div class="ch-info">
                 <div class="ch-name">${ch.title}</div>
@@ -389,6 +441,7 @@
       const sched = getEpgSchedule(currentChannel, 2);
       const nowP = sched[0];
       const nextP = sched[1];
+      document.getElementById("barChLogo").innerHTML = renderLogoInner(currentChannel);
       document.getElementById("barChNum").textContent = `CH ${currentChannel.channelNumber}`;
       document.getElementById("barChTitle").textContent = currentChannel.title;
       document.getElementById("barChRating").textContent = currentChannel.rating || "HD";
@@ -437,12 +490,37 @@
       }
     }, { passive: true });
 
-    function playStream(ch, fromUser = false) {
+    let failedInChain = new Set();
+    let failoverMsg = null;
+
+    function handleStreamFailure(failedCh) {
+      failedInChain.add(failedCh.id);
+      if (failedInChain.size <= 3) {
+        const backup = findSimilarBackupChannel(failedCh, failedInChain);
+        if (backup) {
+          failoverMsg = `Señal caída → Respaldo: ${backup.title}`;
+          currentChannel = backup;
+          localStorage.setItem("mariantv_plus_last", backup.id);
+          renderChannels();
+          playStream(backup, false, true);
+          showHudBarTemporarily();
+          return;
+        }
+      }
+      updateBar("Señal no disponible — elige otro canal similar.");
+      showHudBarTemporarily();
+    }
+
+    function playStream(ch, fromUser = false, isFailover = false) {
       if (!ch) return;
+      if (!isFailover) {
+        failedInChain.clear();
+        failoverMsg = null;
+      }
       const video = document.getElementById("tvVideo");
       if (fromUser) { video.muted = false; video.volume = 1.0; }
       if (hls) { hls.destroy(); hls = null; }
-      updateBar("Conectando señal en vivo...");
+      updateBar(failoverMsg || "Conectando señal en vivo...");
 
       const tryPlay = () => {
         video.play().then(() => updateMuteUI()).catch(() => {
@@ -450,15 +528,23 @@
         });
       };
 
+      video.onerror = () => {
+        if (!ch.streamUrl.includes(".m3u8") || !Hls.isSupported()) {
+          handleStreamFailure(ch);
+        }
+      };
+
       if (ch.streamUrl.includes(".m3u8") && Hls.isSupported()) {
         hls = new Hls();
         hls.loadSource(ch.streamUrl);
         hls.attachMedia(video);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => { updateBar(null); tryPlay(); });
-        hls.on(Hls.Events.ERROR, (ev, data) => { if (data.fatal) updateBar("Señal no disponible en navegador (probar otro canal)."); });
+        hls.on(Hls.Events.MANIFEST_PARSED, () => { updateBar(failoverMsg); failoverMsg = null; tryPlay(); });
+        hls.on(Hls.Events.ERROR, (ev, data) => {
+          if (data.fatal) handleStreamFailure(ch);
+        });
       } else {
         video.src = ch.streamUrl;
-        video.onloadedmetadata = () => updateBar(null);
+        video.onloadedmetadata = () => { updateBar(failoverMsg); failoverMsg = null; };
         tryPlay();
       }
     }
@@ -512,7 +598,7 @@
           bar.classList.add("hidden");
           floatNav.classList.add("hidden");
         }
-      }, 4000);
+      }, 3500);
     }
 
     function toggleOverlay() {
@@ -544,8 +630,11 @@
         return `
           <div class="epg-grid-row ${active ? 'active' : ''}">
             <div class="epg-ch-col" onclick="selectChannel('${ch.id}');closeEpgModal();">
-              <span class="ch-badge">CH ${ch.channelNumber}</span>
-              <div style="font-weight:700;font-size:13px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${ch.title}</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                <div class="ch-logo-box" style="width:28px;height:28px;">${renderLogoInner(ch)}</div>
+                <span class="ch-badge">CH ${ch.channelNumber}</span>
+              </div>
+              <div style="font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${ch.title}</div>
               <div style="font-size:11px;color:#64748b;">${ch.category}</div>
             </div>
             <div class="epg-slots">
@@ -562,7 +651,6 @@
       }).join("");
     }
 
-    document.addEventListener("mousemove", () => { if (!showOverlay) showHudBarTemporarily(); });
     document.addEventListener("keydown", e => {
       if (document.activeElement.tagName === "INPUT") return;
       if (e.key === "ArrowUp") { e.preventDefault(); stepChannel(-1); }
